@@ -78,3 +78,16 @@ test("时钟倒退不产生负数", () => {
   t.settle();
   assert.equal(t.totalMs, 0);
 });
+
+test("交互式提问的暂停/恢复序列：用户思考时间不计入", () => {
+  const c = fakeClock();
+  const t = createWorktimeTracker(c.read);
+  t.start();                              // agent_start
+  c.advance(4_000);                       // 生成 + 网络往返
+  assert.equal(t.settle(), true);         // tool_call(ask_user_question) → 暂停
+  c.advance(120_000);                     // 用户思考 2 分钟
+  t.start();                              // tool_result → 恢复
+  c.advance(3_000);                       // 继续生成至结束
+  assert.equal(t.settle(), true);         // agent_settled
+  assert.equal(t.totalMs, 7_000);         // 思考的 120s 不计入
+});

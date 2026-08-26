@@ -7,6 +7,14 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 const ENTRY_TYPE = "worktime";
 
+/** 交互式工具：执行时会阻塞等待用户输入，计时在其执行期间暂停。 */
+export const INTERACTIVE_TOOLS: ReadonlySet<string> = new Set(["ask_user_question"]);
+
+/** 该工具执行期间是否应暂停计时。 */
+export function pausesTiming(toolName: string): boolean {
+  return INTERACTIVE_TOOLS.has(toolName);
+}
+
 /** 把毫秒格式化为「X小时Y分Z秒」。 */
 export function formatDuration(ms: number): string {
   const totalSec = Math.floor(Math.max(0, ms) / 1000);
@@ -93,6 +101,17 @@ export default function worktime(pi: ExtensionAPI) {
 
   pi.on("agent_settled", async (_event, ctx) => {
     if (tracker.settle()) persist(ctx);
+  });
+
+  // 交互式工具开始阻塞等用户时先结算并落盘（暂停计时），避免把用户思考时间算进工作时长。
+  pi.on("tool_call", async (event, ctx) => {
+    if (pausesTiming(event.toolName) && tracker.settle()) persist(ctx);
+  });
+
+  // 工具返回后恢复计时；若运行已被中止（已空闲）则不恢复。
+  pi.on("tool_result", async (event, ctx) => {
+    if (!pausesTiming(event.toolName)) return;
+    if (!ctx.isIdle()) tracker.start();
   });
 
   // 兜底：任务中途退出（quit/reload/new/resume/fork）也把未结算段写入。
