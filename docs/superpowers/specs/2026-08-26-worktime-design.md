@@ -68,6 +68,14 @@ agent_settled ──► totalMs += now - runStartTs; runStartTs = null
 - `/new`、`/resume`、`/fork`：`session_shutdown` → `session_start` 流程天然重置/恢复状态。
 - print 模式（`-p`）：命令不可用但计时无害。
 
+## 修正记录
+
+### 2026-08-26：交互式提问期间暂停计时
+
+原设计把整个 agent 运行期都计入工作时长，导致模型调用 `ask_user_question` 等交互式工具时，**用户思考答案的时间也被计入**，违背「用户思考、空闲等待不计入」的初衷。
+
+修正：新增 `tool_call` / `tool_result` 钩子——交互式工具（`INTERACTIVE_TOOLS`，当前含 `ask_user_question`）开始阻塞等用户前先结算落盘（暂停），工具返回且未中止则开新段恢复。已知权衡：并行工具模式下兄弟工具的执行时间会随暂停一起停表（实践中提问类工具通常独占运行段）。
+
 ## 测试方式
 
 手动验证清单：
