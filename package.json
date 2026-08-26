@@ -1,0 +1,14 @@
+{
+  "name": "pi-worktime",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test 'tests/*.test.ts'",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.3",
+    "@types/node": "^26.3.0",
+    "typescript": "^7.0.2"
+  }
+}
