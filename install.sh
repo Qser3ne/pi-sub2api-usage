@@ -7,6 +7,7 @@ cd "$(dirname "$0")"
 shopt -s nullglob
 linked=0
 for d in */; do
+  case "$d" in _*\|*/) continue ;; esac
   d=${d%/}
   entry=""
   if [ -f "$d/$d.ts" ]; then
