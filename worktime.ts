@@ -16,3 +16,38 @@ export function formatDuration(ms: number): string {
   parts.push(`${s}秒`);
   return parts.join("");
 }
+
+export function createWorktimeTracker(now: () => number = Date.now) {
+  let totalMs = 0;
+  let runStartTs: number | null = null;
+
+  const settle = (): boolean => {
+    if (runStartTs === null) return false;
+    totalMs += Math.max(0, now() - runStartTs);
+    runStartTs = null;
+    return true;
+  };
+
+  return {
+    reset(restoredTotal = 0): void {
+      totalMs = restoredTotal;
+      runStartTs = null;
+    },
+    start(): void {
+      settle(); // 防重叠：上一段未结算先结算
+      runStartTs = now();
+    },
+    settle,
+    get totalMs(): number {
+      return totalMs;
+    },
+    get isRunning(): boolean {
+      return runStartTs !== null;
+    },
+    currentRunMs(): number {
+      return runStartTs === null ? 0 : Math.max(0, now() - runStartTs);
+    },
+  };
+}
+
+export type WorktimeTracker = ReturnType<typeof createWorktimeTracker>;
