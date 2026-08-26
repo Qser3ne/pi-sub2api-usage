@@ -28,7 +28,10 @@ export function formatDuration(ms: number): string {
   return parts.join("");
 }
 
-export function createWorktimeTracker(now: () => number = Date.now) {
+/** 单调毫秒时钟：进程内单调递增，休眠期间冻结，不受 NTP 校时影响——避免系统休眠把计时段吹大。 */
+export const monotonicNow = (): number => Number(process.hrtime.bigint() / 1_000_000n);
+
+export function createWorktimeTracker(now: () => number = monotonicNow) {
   let totalMs = 0;
   let runStartTs: number | null = null;
 
@@ -64,7 +67,7 @@ export function createWorktimeTracker(now: () => number = Date.now) {
 export type WorktimeTracker = ReturnType<typeof createWorktimeTracker>;
 
 /** 从会话条目中找最后一条 worktime 条目，返回其 totalMs；没有则返回 0。 */
-function findPersistedTotal(entries: ReadonlyArray<{ type: string; customType?: string; data?: unknown }>): number {
+export function findPersistedTotal(entries: ReadonlyArray<{ type: string; customType?: string; data?: unknown }>): number {
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i];
     if (e.type === "custom" && e.customType === ENTRY_TYPE) {
@@ -92,7 +95,8 @@ export default function worktime(pi: ExtensionAPI) {
   };
 
   pi.on("session_start", async (_event, ctx) => {
-    tracker.reset(findPersistedTotal(ctx.sessionManager.getEntries()));
+    // 只从当前活动分支恢复：废弃分支的 worktime 条目不参与，避免切分支后恢复出错值。
+    tracker.reset(findPersistedTotal(ctx.sessionManager.getBranch()));
   });
 
   pi.on("agent_start", async () => {

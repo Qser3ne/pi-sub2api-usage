@@ -76,6 +76,11 @@ agent_settled ──► totalMs += now - runStartTs; runStartTs = null
 
 修正：新增 `tool_call` / `tool_result` 钩子——交互式工具（`INTERACTIVE_TOOLS`，当前含 `ask_user_question`）开始阻塞等用户前先结算落盘（暂停），工具返回且未中止则开新段恢复。已知权衡：并行工具模式下兄弟工具的执行时间会随暂停一起停表（实践中提问类工具通常独占运行段）。
 
+### 2026-08-26：单调时钟抗休眠 + 按活动分支恢复
+
+1. **休眠失真**：计时默认钟由墙钟 `Date.now()` 改为单调时钟 `monotonicNow()`（`hrtime`，休眠冻结、不受 NTP 校时影响）。所有区段只用段内差值、无绝对时间语义，整体切换无副作用；系统休眠的几十分钟不再被计入工作时长。
+2. **分支串扰**：恢复来源由「文件全部条目」（`getEntries()`）改为「当前活动分支」（`getBranch()`），废弃分支的 worktime 条目不再影响 `/tree` 切换后的恢复值。
+
 ## 测试方式
 
 手动验证清单：
