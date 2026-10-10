@@ -1,0 +1,33 @@
+{
+  "name": "pi-sub2api-usage",
+  "version": "0.1.0",
+  "description": "Pi extension that shows sub2api platform-quota usage in the statusline for providers marked \"sub2api\": true.",
+  "type": "module",
+  "private": true,
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi",
+    "sub2api",
+    "usage",
+    "quota",
+    "statusline"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0"
+  }
+}
