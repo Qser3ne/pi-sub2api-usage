@@ -9,11 +9,13 @@ display, sub2api providers get theirs.
 Statusline preview (rendered by `@narumitw/pi-statusline`):
 
 ```
-📊 sub2api-claude 20% ↻ 4h12m 16% ↻ 3d13h
+📊 sub2api-claude 86% ↻ 4h12m 74% ↻ 3d13h
 ```
 
-- `20% ↻ 4h12m` — 5-hour window used, resetting in 4h12m
-- `16% ↻ 3d13h` — 7-day window used, resetting in 3d13h
+- `86% ↻ 4h12m` — 5-hour window REMAINING, resetting in 4h12m
+- `74% ↻ 3d13h` — 7-day window REMAINING, resetting in 3d13h
+
+(Percentages show remaining quota, matching pi-usage's codex-style default.)
 
 ## How it works
 
