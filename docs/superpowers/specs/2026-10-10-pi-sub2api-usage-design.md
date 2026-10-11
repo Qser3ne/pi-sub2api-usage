@@ -215,3 +215,15 @@ pi-sub2api-usage/            # 仓库根（本 repo）
 - `setStatus(key, undefined)` 是否从 map 移除 key（影响 chip 顺序）——读 pi 源码验证即可。
 - `platformMap` 与自动推导冲突时的优先级实现细节（文档已定：显式覆盖优先）。
 - `/sub2api-usage` 命令是否进首版（默认：进，仅打印原始 JSON + 强制刷新，工作量小）。
+
+---
+
+## 修订 A（2026-10-10，用户指定）：数据源转向
+
+联调时用户澄清：所需"用量"是**上游订阅账号的额度窗口**（管理后台 /admin/accounts 选中账号的"查询额度"），不是用户级平台限额。
+
+- 数据源：`GET {baseUrl}/api/v1/admin/accounts/{id}/usage?source=passive|active`（管理员 JWT，登录流程复用 3 节）
+- 响应：`data.five_hour` / `data.seven_day` 窗口，各含 `utilization`（已用百分比 0–100+）与 `resets_at`（RFC3339 或 null）
+- 配置变化：settings 弃用 `platformMap`，新增 `accounts`（providerId → 账号 ID）与 `usageSource`（默认 passive，不打上游）；`route` 变为含 `{id}` 占位符的模板（保留"路由+请求方式可配置"）
+- 显示格式改为复刻 pi-usage codex 风格：`📊 sub2api-claude 20% ↻ 4h12m 16% ↻ 3d13h`（5h 窗口 + 7d 窗口，各带 ↻ 倒计时；窗口为 null 时跳过该段，两者皆 null 显示 `no usage`）
+- 实测：账号 3589（claude 自用，OAuth）返回真实数据；apikey 中继型账号（3569/3587/10/9）该接口 500，无窗口语义
