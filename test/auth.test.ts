@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -90,6 +90,7 @@ test("login happy path persists cache with mode 0600", async () => {
   assert.deepEqual(JSON.parse(calls[0]!.init.body as string), { email: "a@b.c", password: "p" });
   const persisted = JSON.parse(readFileSync(cachePath, "utf8"));
   assert.deepEqual(persisted, { accessToken: "abc", expiresAt: now + 3_600_000 });
+  assert.equal(statSync(cachePath).mode & 0o777, 0o600);
 });
 
 test("login with baseUrl from settings, requires_2fa raises AuthError 2fa", async () => {

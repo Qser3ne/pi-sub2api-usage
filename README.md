@@ -24,8 +24,9 @@ Statusline preview (rendered by `@narumitw/pi-statusline`):
 - Logs into the panel with your email/password to mint access tokens (cached at
   `~/.pi/agent/pi-sub2api-usage-cache.json`, mode 0600; re-login happens automatically
   when they expire or a usage call returns 401).
-- Refreshes on session start, model switch, and turn start, with a 5-minute cache,
-  30s failure backoff, and 60s countdown re-render — mirroring pi-usage's cadence.
+- Refreshes on session start, model switch, and turn start; while a marked provider
+  stays selected it also re-queries every `refreshMs` (5 min by default, like
+  pi-usage), with a 30s failure backoff and a 60s countdown re-render.
 - By default queries `source=passive` (locally recorded data, no upstream round-trip);
   set `"usageSource": "active"` to query upstream on every refresh instead.
 - Publishes under its own status key `sub2api-usage`, so it never fights pi-usage.
@@ -91,8 +92,8 @@ All fields:
 
 ## Command
 
-`/sub2api-usage` — force-refreshes and prints the raw usage payload for the
-current provider.
+`/sub2api-usage` — force-refreshes and prints the parsed usage payload for the
+ current provider.
 
 ## Uninstall
 
