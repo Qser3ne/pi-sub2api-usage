@@ -8,19 +8,23 @@ export interface Sub2ApiSettings {
   password?: string;
   /** Manual access token; takes precedence over auto-login. */
   token?: string;
+  /** Route template; `{id}` is replaced with the account id. */
   route: string;
   method: "GET" | "POST";
-  platformMap: Record<string, string>;
+  /** providerId → sub2api admin account id. */
+  accounts: Record<string, number>;
+  /** passive: cached/local data only; active: may query upstream. */
+  usageSource: "passive" | "active";
   refreshMs: number;
 }
 
 export interface ResolvedTarget {
   providerId: string;
-  platform: string;
+  accountId: number;
   instanceBaseUrl: string;
 }
 
-export type ProviderResolution = ResolvedTarget | "unmarked" | "no-platform" | "no-base-url";
+export type ProviderResolution = ResolvedTarget | "unmarked" | "no-account" | "no-base-url";
 
 export interface ModelsProviderEntry {
   api?: unknown;
@@ -28,7 +32,7 @@ export interface ModelsProviderEntry {
   sub2api?: unknown;
 }
 
-const DEFAULT_ROUTE = "/api/v1/user/platform-quotas";
+const DEFAULT_ROUTE = "/api/v1/admin/accounts/{id}/usage";
 const DEFAULT_REFRESH_MS = 300_000;
 
 const stringOrUndefined = (value: unknown): string | undefined =>
@@ -42,11 +46,12 @@ export function normalizeSettings(raw: unknown): Sub2ApiSettings {
     typeof refreshMsRaw === "number" && Number.isFinite(refreshMsRaw) && refreshMsRaw > 0
       ? refreshMsRaw
       : DEFAULT_REFRESH_MS;
-  const platformMapRaw = source.platformMap;
-  const platformMap: Record<string, string> = {};
-  if (platformMapRaw !== null && typeof platformMapRaw === "object") {
-    for (const [key, value] of Object.entries(platformMapRaw as Record<string, unknown>)) {
-      if (typeof value === "string" && value.trim().length > 0) platformMap[key] = value.trim();
+  const usageSource = source.usageSource === "active" ? "active" : "passive";
+  const accountsRaw = source.accounts;
+  const accounts: Record<string, number> = {};
+  if (accountsRaw !== null && typeof accountsRaw === "object") {
+    for (const [key, value] of Object.entries(accountsRaw as Record<string, unknown>)) {
+      if (typeof value === "number" && Number.isFinite(value) && value > 0) accounts[key] = value;
     }
   }
   return {
@@ -56,7 +61,8 @@ export function normalizeSettings(raw: unknown): Sub2ApiSettings {
     token: stringOrUndefined(source.token),
     route: stringOrUndefined(source.route) ?? DEFAULT_ROUTE,
     method,
-    platformMap,
+    accounts,
+    usageSource,
     refreshMs,
   };
 }
@@ -99,13 +105,6 @@ function loadJsonFile<T>(path: string, parse: (raw: unknown) => T): { value: T; 
   }
 }
 
-const derivePlatform = (api: unknown): string | undefined => {
-  if (typeof api !== "string") return undefined;
-  if (api === "anthropic-messages") return "anthropic";
-  if (api.startsWith("openai")) return "openai";
-  return undefined;
-};
-
 const instanceBaseUrlFromProvider = (providerBaseUrl: unknown): string | undefined =>
   typeof providerBaseUrl === "string" && providerBaseUrl.trim().length > 0
     ? providerBaseUrl.trim().replace(/\/v1\/?$/, "")
@@ -119,9 +118,9 @@ export function resolveProviderTarget(
   if (providerId === undefined) return "unmarked";
   const entry = providers[providerId];
   if (!entry || entry.sub2api !== true) return "unmarked";
-  const platform = settings.platformMap[providerId] ?? derivePlatform(entry.api);
-  if (platform === undefined) return "no-platform";
+  const accountId = settings.accounts[providerId];
+  if (accountId === undefined) return "no-account";
   const instanceBaseUrl = settings.baseUrl ?? instanceBaseUrlFromProvider(entry.baseUrl);
   if (instanceBaseUrl === undefined) return "no-base-url";
-  return { providerId, platform, instanceBaseUrl };
+  return { providerId, accountId, instanceBaseUrl };
 }

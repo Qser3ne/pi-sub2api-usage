@@ -1,51 +1,53 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatQuotaChip, formatCountdown, truncateChip } from "../src/format.ts";
-import type { PlatformQuota, QuotaWindow } from "../src/sub2api.ts";
+import type { AccountUsage, UsageWindow } from "../src/sub2api.ts";
 
 const NOW = Date.parse("2026-10-10T12:00:00Z");
 
-const window = (usageUsd: number, limitUsd: number | null, resetsAt: number | null = null): QuotaWindow => ({
-  usageUsd,
-  limitUsd,
+const window = (utilization: number | null, resetsAt: number | null = null): UsageWindow => ({
+  utilization,
   resetsAt,
 });
 
-const quota = (daily: QuotaWindow, weekly: QuotaWindow, monthly: QuotaWindow): PlatformQuota => ({
-  platform: "openai",
-  daily,
-  weekly,
-  monthly,
+const usage = (fiveHour: UsageWindow | null, sevenDay: UsageWindow | null): AccountUsage => ({
+  fiveHour,
+  sevenDay,
 });
 
-test("full spec chip with all windows", () => {
-  const q = quota(
-    window(6.2, 10, NOW + ((4 * 60 + 12) * 60 + 5) * 1000),
-    window(31, 100),
-    window(12, 100),
+test("full codex-style chip with both windows and countdowns", () => {
+  const u = usage(
+    window(0, NOW + ((2 * 60 + 12) * 60 + 5) * 1000),
+    window(26, NOW + ((3 * 24 + 13) * 60 * 60) * 1000),
   );
-  assert.equal(formatQuotaChip("sub2api-gpt", q, NOW), "📊 sub2api-gpt 62% ↻ 4h12m · wk 31% · mo 12%");
+  assert.equal(formatQuotaChip("codex", u, NOW), "📊 codex 0% ↻ 2h12m 26% ↻ 3d13h");
 });
 
-test("percent uses floor of usage/limit", () => {
-  const q = quota(window(6.29, 10), window(0.4, 100), window(99.9, 100));
-  const chip = formatQuotaChip("p", q, NOW);
-  assert.ok(chip.includes("62%"));
-  assert.ok(chip.includes("wk 0%"));
-  assert.ok(chip.includes("mo 99%"));
+test("utilization rounds to integer percent", () => {
+  const u = usage(window(16.4, NOW + 90_000), window(20.5));
+  const chip = formatQuotaChip("p", u, NOW);
+  assert.ok(chip.includes("16%"), chip);
+  assert.ok(chip.includes("21%"), chip);
 });
 
-test("null limit degrades to used-usd segments", () => {
-  const q = quota(window(6.2, null), window(31, null), window(12.4, null));
-  const chip = formatQuotaChip("p", q, NOW);
-  assert.ok(chip.includes("$6.2"));
-  assert.ok(chip.includes("wk $31"));
-  assert.ok(chip.includes("mo $12"));
+test("null resets_at drops the countdown for that window", () => {
+  const u = usage(window(20, null), window(16, null));
+  assert.equal(formatQuotaChip("p", u, NOW), "📊 p 20% 16%");
 });
 
-test("null daily resetsAt omits the countdown segment", () => {
-  const q = quota(window(6.2, 10, null), window(31, 100), window(12, 100));
-  assert.equal(formatQuotaChip("p", q, NOW), "📊 p 62% · wk 31% · mo 12%");
+test("null window is skipped entirely", () => {
+  const u = usage(null, window(16, NOW + 3_600_000));
+  assert.equal(formatQuotaChip("p", u, NOW), "📊 p 16% ↻ 1h0m");
+});
+
+test("both windows null renders no usage", () => {
+  const u = usage(null, null);
+  assert.equal(formatQuotaChip("p", u, NOW), "📊 p no usage");
+});
+
+test("past resets_at shows 0s countdown", () => {
+  const u = usage(window(100, NOW - 1_000), window(50, NOW + 60_000));
+  assert.equal(formatQuotaChip("p", u, NOW), "📊 p 100% ↻ 0s 50% ↻ 1m");
 });
 
 test("formatCountdown renders compact units", () => {

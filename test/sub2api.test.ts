@@ -1,57 +1,66 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parsePlatformQuotas, fetchQuotas, findQuota } from "../src/sub2api.ts";
+import { parseAccountUsage, fetchAccountUsage } from "../src/sub2api.ts";
 
-const rawRecord = {
-  platform: "openai",
-  daily_usage_usd: 6.2,
-  daily_limit_usd: 10,
-  daily_window_resets_at: "2026-10-11T00:00:00+08:00",
-  weekly_usage_usd: 31,
-  weekly_limit_usd: 100,
-  weekly_window_resets_at: null,
-  monthly_usage_usd: 12,
-  monthly_limit_usd: null,
-  monthly_window_resets_at: null,
-};
+const usageEnvelope = (data: unknown) => ({ code: 0, message: "success", data });
 
-const envelope = (quotas: unknown[]) => ({ code: 0, message: "success", data: { platform_quotas: quotas } });
-
-test("parsePlatformQuotas parses spec field names with null semantics", () => {
-  const quotas = parsePlatformQuotas(envelope([rawRecord]));
-  assert.equal(quotas.length, 1);
-  const q = quotas[0]!;
-  assert.equal(q.platform, "openai");
-  assert.equal(q.daily.usageUsd, 6.2);
-  assert.equal(q.daily.limitUsd, 10);
-  assert.equal(q.daily.resetsAt, Date.parse("2026-10-11T00:00:00+08:00"));
-  assert.equal(q.weekly.resetsAt, null);
-  assert.equal(q.monthly.limitUsd, null);
-  assert.equal(q.monthly.usageUsd, 12);
+const realPayload = usageEnvelope({
+  source: "passive",
+  updated_at: "2026-10-10T15:18:09Z",
+  five_hour: {
+    utilization: 20,
+    resets_at: "2026-10-11T03:50:00+08:00",
+    remaining_seconds: 46000,
+    used_requests: 12,
+    limit_requests: 260,
+  },
+  seven_day: {
+    utilization: 16,
+    resets_at: "2026-10-11T12:00:00+08:00",
+    remaining_seconds: 90000,
+  },
 });
 
-test("parsePlatformQuotas ignores unknown fields and treats missing limit/reset as null", () => {
-  const quotas = parsePlatformQuotas(
-    envelope([{ platform: "anthropic", daily_usage_usd: 1, weekly_usage_usd: 2, monthly_usage_usd: 3, extra: "x" }]),
+test("parseAccountUsage parses the real passive payload", () => {
+  const usage = parseAccountUsage(realPayload);
+  assert.equal(usage.fiveHour?.utilization, 20);
+  assert.equal(usage.fiveHour?.resetsAt, Date.parse("2026-10-11T03:50:00+08:00"));
+  assert.equal(usage.sevenDay?.utilization, 16);
+  assert.equal(usage.sevenDay?.resetsAt, Date.parse("2026-10-11T12:00:00+08:00"));
+});
+
+test("parseAccountUsage tolerates null windows and null resets_at", () => {
+  const usage = parseAccountUsage(
+    usageEnvelope({ five_hour: null, seven_day: { utilization: 3, resets_at: null } }),
   );
-  const q = quotas[0]!;
-  assert.equal(q.daily.limitUsd, null);
-  assert.equal(q.daily.resetsAt, null);
+  assert.equal(usage.fiveHour, null);
+  assert.equal(usage.sevenDay?.utilization, 3);
+  assert.equal(usage.sevenDay?.resetsAt, null);
 });
 
-test("parsePlatformQuotas rejects malformed envelopes", () => {
+test("parseAccountUsage ignores unrelated sibling fields", () => {
+  const usage = parseAccountUsage(
+    usageEnvelope({
+      five_hour: { utilization: 1, resets_at: null },
+      seven_day: { utilization: 2, resets_at: null },
+      seven_day_sonnet: { utilization: 99, resets_at: "2026-10-12T00:00:00Z" },
+      grok_local_usage: { total: 5 },
+    }),
+  );
+  assert.equal(usage.sevenDay?.utilization, 2);
+});
+
+test("parseAccountUsage rejects malformed envelopes", () => {
   for (const bad of [
-    { code: 1, message: "boom", data: { platform_quotas: [] } },
+    { code: 1, message: "internal error", data: null },
     { code: 0 },
-    { code: 0, data: {} },
-    { code: 0, data: { platform_quotas: "nope" } },
-    envelope([{ platform: "x", daily_usage_usd: "lots" }]),
-    envelope([{ platform: "x", daily_limit_usd: "10" }]),
-    envelope([{ platform: "x", daily_window_resets_at: 42 }]),
-    envelope([{ platform: 7, daily_usage_usd: 1 }]),
-    envelope([{ daily_usage_usd: 1 }]),
+    { code: 0, data: { five_hour: "nope" } },
+    { code: 0, data: { five_hour: { utilization: "high", resets_at: null } } },
+    { code: 0, data: { five_hour: { utilization: 1, resets_at: 42 } } },
+    { code: 0, data: { seven_day: { utilization: 1, resets_at: "not-a-date" } } },
+    null,
   ]) {
-    assert.throws(() => parsePlatformQuotas(bad), Error, `should throw for ${JSON.stringify(bad)}`);
+    assert.throws(() => parseAccountUsage(bad), Error, `should throw for ${JSON.stringify(bad)}`);
   }
 });
 
@@ -61,58 +70,70 @@ const jsonResponse = (body: unknown, status = 200) => ({
   json: async () => body,
 });
 
-test("fetchQuotas GET sends auth, UA, and route and parses quotas", async () => {
+test("fetchAccountUsage builds the admin route with id and source query", async () => {
   const calls: Array<{ url: string; init: RequestInit }> = [];
   const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
     calls.push({ url: String(url), init: init ?? {} });
-    return jsonResponse(envelope([rawRecord]));
-  }) as typeof fetch;
-  const quotas = await fetchQuotas({
+    return jsonResponse(realPayload);
+  }) as unknown as typeof fetch;
+  const usage = await fetchAccountUsage({
     instanceBaseUrl: "http://h:8080",
-    route: "/api/v1/user/platform-quotas",
+    route: "/api/v1/admin/accounts/{id}/usage",
     method: "GET",
     token: "tok",
+    accountId: 3589,
+    usageSource: "passive",
     fetchImpl,
   });
-  assert.equal(quotas.length, 1);
+  assert.equal(usage.fiveHour?.utilization, 20);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0]!.url, "http://h:8080/api/v1/user/platform-quotas");
+  assert.equal(calls[0]!.url, "http://h:8080/api/v1/admin/accounts/3589/usage?source=passive");
   assert.equal(calls[0]!.init.method, "GET");
   const headers = calls[0]!.init.headers as Record<string, string>;
   assert.equal(headers.Authorization, "Bearer tok");
   assert.equal(headers["User-Agent"], "pi-sub2api-usage/0.1.0");
 });
 
-test("fetchQuotas POST sends empty object body", async () => {
+test("fetchAccountUsage active source and POST method pass through", async () => {
   const calls: Array<{ url: string; init: RequestInit }> = [];
   const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
     calls.push({ url: String(url), init: init ?? {} });
-    return jsonResponse(envelope([]));
-  }) as typeof fetch;
-  await fetchQuotas({
+    return jsonResponse(realPayload);
+  }) as unknown as typeof fetch;
+  await fetchAccountUsage({
     instanceBaseUrl: "http://h:8080",
-    route: "/q",
+    route: "/api/v1/admin/accounts/{id}/usage",
     method: "POST",
     token: "t",
+    accountId: 7,
+    usageSource: "active",
     fetchImpl,
   });
+  assert.equal(calls[0]!.url, "http://h:8080/api/v1/admin/accounts/7/usage?source=active");
   assert.equal(calls[0]!.init.method, "POST");
   assert.equal(calls[0]!.init.body, "{}");
 });
 
-test("fetchQuotas throws on non-2xx status", async () => {
+test("fetchAccountUsage throws on non-2xx status", async () => {
   const fetchImpl = (async () => jsonResponse({ code: 0 }, 401)) as unknown as typeof fetch;
   await assert.rejects(
-    fetchQuotas({ instanceBaseUrl: "http://h", route: "/q", method: "GET", token: "t", fetchImpl }),
+    fetchAccountUsage({
+      instanceBaseUrl: "http://h",
+      route: "/api/v1/admin/accounts/{id}/usage",
+      method: "GET",
+      token: "t",
+      accountId: 1,
+      usageSource: "passive",
+      fetchImpl,
+    }),
     /401/,
   );
 });
 
-test("fetchQuotas rejects when fetchImpl never settles before timeout", async () => {
+test("fetchAccountUsage rejects when fetchImpl never settles before timeout", async () => {
   const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
     const signal = (init ?? {}).signal as AbortSignal | undefined;
     return new Promise((_resolve, reject) => {
-      // Ref'd keepalive so the event loop stays alive until the (unref'd) abort fires.
       const keepalive = setTimeout(() => reject(new Error("keepalive expired")), 5000);
       signal?.addEventListener(
         "abort",
@@ -125,21 +146,15 @@ test("fetchQuotas rejects when fetchImpl never settles before timeout", async ()
     });
   }) as unknown as typeof fetch;
   await assert.rejects(
-    fetchQuotas({
+    fetchAccountUsage({
       instanceBaseUrl: "http://h",
-      route: "/q",
+      route: "/api/v1/admin/accounts/{id}/usage",
       method: "GET",
       token: "t",
+      accountId: 1,
+      usageSource: "passive",
       timeoutMs: 30,
       fetchImpl,
     }),
   );
-});
-
-test("findQuota matches by platform", () => {
-  const quotas = parsePlatformQuotas(
-    envelope([rawRecord, { platform: "anthropic", daily_usage_usd: 0, weekly_usage_usd: 0, monthly_usage_usd: 0 }]),
-  );
-  assert.equal(findQuota(quotas, "anthropic")?.platform, "anthropic");
-  assert.equal(findQuota(quotas, "gemini"), undefined);
 });

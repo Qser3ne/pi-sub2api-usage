@@ -1,15 +1,7 @@
-import type { PlatformQuota, QuotaWindow } from "./sub2api.ts";
+import type { AccountUsage, UsageWindow } from "./sub2api.ts";
 
 const CHIP_PREFIX = "📊";
 const MAX_CHIP_LENGTH = 80;
-
-const formatUsd = (usage: number): string =>
-  `$${usage.toFixed(usage < 10 ? 1 : 0)}`;
-
-const formatUsage = (window: QuotaWindow): string => {
-  if (window.limitUsd === null || window.limitUsd <= 0) return formatUsd(window.usageUsd);
-  return `${Math.floor((window.usageUsd / window.limitUsd) * 100)}%`;
-};
 
 export function formatCountdown(resetsAt: number, now: number): string {
   const remainingMs = resetsAt - now;
@@ -30,16 +22,20 @@ export function truncateChip(text: string, max = MAX_CHIP_LENGTH): string {
   return `${text.slice(0, max)}…`;
 }
 
-export function formatQuotaChip(providerId: string, quota: PlatformQuota, now: number): string {
-  const daily = formatUsage(quota.daily);
-  const countdown =
-    quota.daily.resetsAt !== null && quota.daily.resetsAt > now
-      ? ` ↻ ${formatCountdown(quota.daily.resetsAt, now)}`
-      : "";
-  const segments = [
-    `${daily}${countdown}`,
-    `wk ${formatUsage(quota.weekly)}`,
-    `mo ${formatUsage(quota.monthly)}`,
-  ];
-  return truncateChip(`${CHIP_PREFIX} ${providerId} ${segments.join(" · ")}`);
+const windowSegment = (window: UsageWindow, now: number): string | undefined => {
+  if (window.utilization === null) return undefined;
+  const percent = `${Math.round(window.utilization)}%`;
+  if (window.resetsAt !== null) return `${percent} ↻ ${formatCountdown(window.resetsAt, now)}`;
+  return percent;
+};
+
+export function formatQuotaChip(providerId: string, usage: AccountUsage, now: number): string {
+  const segments = [usage.fiveHour, usage.sevenDay]
+    .filter((window): window is UsageWindow => window !== null)
+    .map((window) => windowSegment(window, now))
+    .filter((segment): segment is string => segment !== undefined);
+  if (segments.length === 0) {
+    return truncateChip(`${CHIP_PREFIX} ${providerId} no usage`);
+  }
+  return truncateChip(`${CHIP_PREFIX} ${providerId} ${segments.join(" ")}`);
 }

@@ -10,7 +10,7 @@ import {
   type ResolvedTarget,
   type Sub2ApiSettings,
 } from "./settings.ts";
-import { fetchQuotas, findQuota, type PlatformQuota } from "./sub2api.ts";
+import { fetchAccountUsage, type AccountUsage } from "./sub2api.ts";
 
 const STATUS_KEY = "sub2api-usage";
 const CHIP_PREFIX = "📊";
@@ -33,8 +33,8 @@ export interface Runtime {
   runManualCheck(ctx: ExtensionCommandContext): Promise<void>;
 }
 
-interface QuotaCacheEntry {
-  quotas: PlatformQuota[];
+interface UsageCacheEntry {
+  usage: AccountUsage;
   fetchedAt: number;
 }
 
@@ -81,7 +81,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
   let countdownTimer: ReturnType<typeof setTimeout> | undefined;
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
   let settingsWarningSent = false;
-  const quotaCache = new Map<string, QuotaCacheEntry>();
+  const usageCache = new Map<string, UsageCacheEntry>();
   const failures = new Map<string, FailureEntry>();
 
   const clearCountdownTimer = () => {
@@ -136,18 +136,15 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
   const scheduleCountdownReRender = (
     ctx: ExtensionContext,
     target: ResolvedTarget,
-    quotas: PlatformQuota[],
+    usage: AccountUsage,
     gen: number,
   ) => {
     clearCountdownTimer();
     countdownTimer = setTimeoutImpl(() => {
       countdownTimer = undefined;
       if (gen !== generation) return;
-      const quota = findQuota(quotas, target.platform);
-      if (quota !== undefined) {
-        safeSetStatus(ctx, formatQuotaChip(target.providerId, quota, now()));
-      }
-      scheduleCountdownReRender(ctx, target, quotas, gen);
+      safeSetStatus(ctx, formatQuotaChip(target.providerId, usage, now()));
+      scheduleCountdownReRender(ctx, target, usage, gen);
     }, COUNTDOWN_REFRESH_MS);
     countdownTimer?.unref?.();
   };
@@ -171,17 +168,12 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     ctx: ExtensionContext,
     target: ResolvedTarget,
     settings: Sub2ApiSettings,
-    quotas: PlatformQuota[],
+    usage: AccountUsage,
     gen: number,
   ) => {
-    const quota = findQuota(quotas, target.platform);
-    if (quota === undefined) {
-      safeSetStatus(ctx, `${CHIP_PREFIX} ${target.providerId} no quota`);
-    } else {
-      safeSetStatus(ctx, formatQuotaChip(target.providerId, quota, now()));
-      if (quota.daily.resetsAt !== null && quota.daily.resetsAt > now()) {
-        scheduleCountdownReRender(ctx, target, quotas, gen);
-      }
+    safeSetStatus(ctx, formatQuotaChip(target.providerId, usage, now()));
+    if (usage.fiveHour?.resetsAt != null && usage.fiveHour.resetsAt > now()) {
+      scheduleCountdownReRender(ctx, target, usage, gen);
     }
     scheduleRefresh(ctx, settings, gen, settings.refreshMs);
   };
@@ -204,7 +196,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     } catch (error) {
       if (gen !== generation || isStaleContextError(error)) return undefined;
       publishError(ctx, target, error);
-      recordFailure(`${target.providerId}:${target.platform}`, errorChipText(error));
+      recordFailure(`${target.providerId}:${target.accountId}`, errorChipText(error));
       scheduleRefresh(ctx, settings, gen, FAILURE_BACKOFF_MS);
       return undefined;
     }
@@ -214,13 +206,15 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     target: ResolvedTarget,
     settings: Sub2ApiSettings,
     token: TokenState,
-  ): Promise<PlatformQuota[]> => {
+  ): Promise<AccountUsage> => {
     try {
-      return await fetchQuotas({
+      return await fetchAccountUsage({
         instanceBaseUrl: target.instanceBaseUrl,
         route: settings.route,
         method: settings.method,
         token: token.accessToken,
+        accountId: target.accountId,
+        usageSource: settings.usageSource,
         fetchImpl,
         signal: statusController?.signal,
       });
@@ -238,12 +232,12 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     gen: number,
     force: boolean,
   ) => {
-    const cacheKey = `${target.providerId}:${target.platform}`;
+    const cacheKey = `${target.providerId}:${target.accountId}`;
     const nowMs = now();
     if (!force) {
-      const cached = quotaCache.get(cacheKey);
+      const cached = usageCache.get(cacheKey);
       if (cached !== undefined && cached.fetchedAt + settings.refreshMs > nowMs) {
-        publishResult(ctx, target, settings, cached.quotas, gen);
+        publishResult(ctx, target, settings, cached.usage, gen);
         scheduleRefresh(ctx, settings, gen, cached.fetchedAt + settings.refreshMs - nowMs);
         return;
       }
@@ -257,16 +251,16 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     }
     const token = await acquireToken(ctx, target, settings, gen);
     if (token === undefined || gen !== generation) return;
-    let quotas: PlatformQuota[];
+    let usage: AccountUsage;
     try {
-      quotas = await fetchWithUnauthorizedRetry(target, settings, token);
+      usage = await fetchWithUnauthorizedRetry(target, settings, token);
     } catch (error) {
       if (gen !== generation || isStaleContextError(error)) return;
       if (isUnauthorizedError(error)) {
         const reToken = await acquireToken(ctx, target, settings, gen);
         if (reToken === undefined || gen !== generation) return;
         try {
-          quotas = await fetchWithUnauthorizedRetry(target, settings, reToken);
+          usage = await fetchWithUnauthorizedRetry(target, settings, reToken);
         } catch (retryError) {
           if (gen !== generation || isStaleContextError(retryError)) return;
           publishError(ctx, target, retryError);
@@ -282,8 +276,8 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
       }
     }
     if (gen !== generation) return;
-    quotaCache.set(cacheKey, { quotas, fetchedAt: now() });
-    publishResult(ctx, target, settings, quotas, gen);
+    usageCache.set(cacheKey, { usage, fetchedAt: now() });
+    publishResult(ctx, target, settings, usage, gen);
   };
 
   const handleEvent = (ctx: ExtensionContext, model: { provider?: string } | undefined): void => {
@@ -296,9 +290,9 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     const { settings } = loadRuntimeConfig(ctx);
     const providers = loadModelsProviders(agentDir);
     const resolution = resolveProviderTarget(model?.provider, providers, settings);
-    if (resolution === "unmarked" || resolution === "no-platform" || resolution === "no-base-url") {
-      if (resolution === "no-platform") {
-        safeSetStatus(ctx, `${CHIP_PREFIX} ${model?.provider ?? "unknown"} error: no platform`);
+    if (resolution === "unmarked" || resolution === "no-account" || resolution === "no-base-url") {
+      if (resolution === "no-account") {
+        safeSetStatus(ctx, `${CHIP_PREFIX} ${model?.provider ?? "unknown"} error: no account id`);
       } else if (resolution === "no-base-url") {
         safeSetStatus(ctx, `${CHIP_PREFIX} ${model?.provider ?? "unknown"} error: no baseUrl`);
       } else {
@@ -323,7 +317,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     statusController = undefined;
     clearCountdownTimer();
     clearRefreshTimer();
-    quotaCache.clear();
+    usageCache.clear();
     failures.clear();
     safeSetStatus(ctx, undefined);
   };
@@ -349,17 +343,12 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     const token = await acquireToken(ctx, resolution, settings, gen);
     if (token === undefined) return;
     try {
-      const quotas = await fetchWithUnauthorizedRetry(resolution, settings, token);
+      const usage = await fetchWithUnauthorizedRetry(resolution, settings, token);
       if (gen !== generation) return;
-      quotaCache.set(`${resolution.providerId}:${resolution.platform}`, { quotas, fetchedAt: now() });
-      const quota = findQuota(quotas, resolution.platform);
-      if (quota === undefined) {
-        safeNotify(ctx, `No quota record for platform ${resolution.platform}.`, "warning");
-      } else {
-        const raw = JSON.stringify({ platform_quotas: [quota] }, null, 2);
-        safeNotify(ctx, raw.length > 1_500 ? `${raw.slice(0, 1_500)}…` : raw, "info");
-        safeSetStatus(ctx, formatQuotaChip(resolution.providerId, quota, now()));
-      }
+      usageCache.set(`${resolution.providerId}:${resolution.accountId}`, { usage, fetchedAt: now() });
+      const raw = JSON.stringify(usage, null, 2);
+      safeNotify(ctx, raw.length > 1_500 ? `${raw.slice(0, 1_500)}…` : raw, "info");
+      safeSetStatus(ctx, formatQuotaChip(resolution.providerId, usage, now()));
     } catch (error) {
       if (gen !== generation || isStaleContextError(error)) return;
       safeNotify(ctx, `sub2api check failed: ${error instanceof Error ? error.message : String(error)}`, "error");

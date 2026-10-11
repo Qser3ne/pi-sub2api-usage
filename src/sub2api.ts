@@ -1,106 +1,84 @@
-export interface QuotaWindow {
-  usageUsd: number;
-  limitUsd: number | null;
-  /** Epoch milliseconds; null when the window has no reset scheduled. */
+export const SUB2API_USER_AGENT = "pi-sub2api-usage/0.1.0";
+const DEFAULT_TIMEOUT_MS = 15_000;
+
+/** A usage window (e.g. five_hour / seven_day) from the admin account-usage endpoint. */
+export interface UsageWindow {
+  /** Percent used, 0–100+. */
+  utilization: number | null;
+  /** Epoch milliseconds; null when no reset is scheduled. */
   resetsAt: number | null;
 }
 
-export interface PlatformQuota {
-  platform: string;
-  daily: QuotaWindow;
-  weekly: QuotaWindow;
-  monthly: QuotaWindow;
+export interface AccountUsage {
+  fiveHour: UsageWindow | null;
+  sevenDay: UsageWindow | null;
 }
-
-export const SUB2API_USER_AGENT = "pi-sub2api-usage/0.1.0";
-const DEFAULT_TIMEOUT_MS = 15_000;
-const WINDOW_PREFIXES = ["daily", "weekly", "monthly"] as const;
 
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
 
-const usageOf = (record: Record<string, unknown>, prefix: string): number => {
-  const value = record[`${prefix}_usage_usd`];
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`invalid ${prefix}_usage_usd for platform ${String(record.platform)}`);
-  }
-  return value;
-};
-
-const limitOf = (record: Record<string, unknown>, prefix: string): number | null => {
-  const value = record[`${prefix}_limit_usd`];
+const parseWindow = (value: unknown, label: string): UsageWindow | null => {
   if (value === null || value === undefined) return null;
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`invalid ${prefix}_limit_usd for platform ${String(record.platform)}`);
+  const record = asRecord(value);
+  if (record === undefined) {
+    throw new Error(`invalid ${label}: expected object or null`);
   }
-  return value;
+  const utilization = record.utilization;
+  if (typeof utilization !== "number" || !Number.isFinite(utilization)) {
+    throw new Error(`invalid ${label}.utilization`);
+  }
+  const resetsAtRaw = record.resets_at;
+  let resetsAt: number | null = null;
+  if (resetsAtRaw !== null && resetsAtRaw !== undefined) {
+    if (typeof resetsAtRaw !== "string") throw new Error(`invalid ${label}.resets_at`);
+    const parsed = Date.parse(resetsAtRaw);
+    if (!Number.isFinite(parsed)) throw new Error(`unparseable ${label}.resets_at`);
+    resetsAt = parsed;
+  }
+  return { utilization, resetsAt };
 };
 
-const resetsAtOf = (record: Record<string, unknown>, prefix: string): number | null => {
-  const value = record[`${prefix}_window_resets_at`];
-  if (value === null || value === undefined) return null;
-  if (typeof value !== "string") {
-    throw new Error(`invalid ${prefix}_window_resets_at for platform ${String(record.platform)}`);
-  }
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) {
-    throw new Error(`unparseable ${prefix}_window_resets_at for platform ${String(record.platform)}`);
-  }
-  return parsed;
-};
-
-const windowOf = (record: Record<string, unknown>, prefix: string): QuotaWindow => ({
-  usageUsd: usageOf(record, prefix),
-  limitUsd: limitOf(record, prefix),
-  resetsAt: resetsAtOf(record, prefix),
-});
-
-export function parsePlatformQuotas(payload: unknown): PlatformQuota[] {
+export function parseAccountUsage(payload: unknown): AccountUsage {
   const envelope = asRecord(payload);
   if (!envelope || envelope.code !== 0) {
     throw new Error(`sub2api envelope error: ${JSON.stringify(envelope?.message ?? "missing envelope")}`);
   }
   const data = asRecord(envelope.data);
-  const rawQuotas = data?.platform_quotas;
-  if (!Array.isArray(rawQuotas)) {
-    throw new Error("sub2api response missing data.platform_quotas array");
+  if (data === undefined) {
+    throw new Error("sub2api response missing data");
   }
-  return rawQuotas.map((entry) => {
-    const record = asRecord(entry);
-    const platform = record?.platform;
-    if (!record || typeof platform !== "string" || platform.trim().length === 0) {
-      throw new Error("platform_quotas entry missing platform string");
-    }
-    return {
-      platform,
-      daily: windowOf(record, "daily"),
-      weekly: windowOf(record, "weekly"),
-      monthly: windowOf(record, "monthly"),
-    };
-  });
+  return {
+    fiveHour: parseWindow(data.five_hour, "five_hour"),
+    sevenDay: parseWindow(data.seven_day, "seven_day"),
+  };
 }
 
-export interface FetchQuotasOptions {
+export interface FetchAccountUsageOptions {
   instanceBaseUrl: string;
+  /** Route template with `{id}` placeholder. */
   route: string;
   method: "GET" | "POST";
   token: string;
+  accountId: number;
+  usageSource: "passive" | "active";
   signal?: AbortSignal;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
 }
 
-export async function fetchQuotas(options: FetchQuotasOptions): Promise<PlatformQuota[]> {
-  const { instanceBaseUrl, route, method, token } = options;
+export async function fetchAccountUsage(options: FetchAccountUsageOptions): Promise<AccountUsage> {
+  const { instanceBaseUrl, route, method, token, accountId, usageSource } = options;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const fetchImpl = options.fetchImpl ?? fetch;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   timer.unref?.();
   const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
-  const url = `${instanceBaseUrl.replace(/\/+$/, "")}${route.startsWith("/") ? route : `/${route}`}`;
+  const path = route.replace("{id}", encodeURIComponent(String(accountId)));
+  const base = `${instanceBaseUrl.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
+  const url = route.includes("source=") ? base : `${base}?source=${usageSource}`;
   let response: Response;
   try {
     response = await fetchImpl(url, {
@@ -123,9 +101,5 @@ export async function fetchQuotas(options: FetchQuotasOptions): Promise<Platform
   if (!response.ok) {
     throw new Error(`sub2api responded ${response.status}`);
   }
-  return parsePlatformQuotas(await response.json());
-}
-
-export function findQuota(quotas: readonly PlatformQuota[], platform: string): PlatformQuota | undefined {
-  return quotas.find((quota) => quota.platform === platform);
+  return parseAccountUsage(await response.json());
 }

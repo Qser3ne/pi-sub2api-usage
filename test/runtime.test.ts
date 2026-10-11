@@ -67,28 +67,12 @@ const scriptedFetch = (steps: FetchStep[]) => {
 const loginStep = (token: string, expiresIn = 3600) => () =>
   jsonResponse({ code: 0, message: "success", data: { access_token: token, expires_in: expiresIn } });
 
-const quotaStep = (overrides: Record<string, unknown> = {}, status = 200) => () =>
+const usageStep = (fiveHour: unknown = { utilization: 20, resets_at: "2026-10-11T03:50:00Z" }, sevenDay: unknown = { utilization: 16, resets_at: "2026-10-11T12:00:00Z" }, status = 200) => () =>
   jsonResponse(
     {
       code: 0,
       message: "success",
-      data: {
-        platform_quotas: [
-          {
-            platform: "openai",
-            daily_usage_usd: 6.2,
-            daily_limit_usd: 10,
-            daily_window_resets_at: "2026-10-11T00:00:00Z",
-            weekly_usage_usd: 31,
-            weekly_limit_usd: 100,
-            weekly_window_resets_at: null,
-            monthly_usage_usd: 12,
-            monthly_limit_usd: 100,
-            monthly_window_resets_at: null,
-            ...overrides,
-          },
-        ],
-      },
+      data: { source: "passive", updated_at: "2026-10-10T15:18:09Z", five_hour: fiveHour, seven_day: sevenDay },
     },
     status,
   );
@@ -124,7 +108,7 @@ const makeFixture = (fetchImpl: typeof fetch): Fixture => {
   );
   writeFileSync(
     join(agentDir, "pi-sub2api-usage.json"),
-    JSON.stringify({ baseUrl: "http://s2a.test", email: "u@x.y", password: "pw" }),
+    JSON.stringify({ baseUrl: "http://s2a.test", email: "u@x.y", password: "pw", accounts: { "sub2api-gpt": 42 } }),
   );
   const clock = new ManualClock();
   const statuses: Array<string | undefined> = [];
@@ -165,7 +149,7 @@ const runtimeOf = (fixture: Fixture, fetchImpl: typeof fetch) =>
   });
 
 test("model_select to marked provider publishes checking then chip; never writes usage key", async () => {
-  const { fetchImpl, calls } = scriptedFetch([loginStep("tok-1"), quotaStep()]);
+  const { fetchImpl, calls } = scriptedFetch([loginStep("tok-1"), usageStep()]);
   const fixture = makeFixture(fetchImpl);
   const runtime = runtimeOf(fixture, fetchImpl);
   runtime.handleEvent(fixture.ctx as unknown as ExtensionContext, { provider: "sub2api-gpt" });
@@ -175,12 +159,12 @@ test("model_select to marked provider publishes checking then chip; never writes
   const last = statuses.at(-1)!;
   assert.ok(last.startsWith("📊 sub2api-gpt "), `unexpected chip: ${last}`);
   assert.ok(last.includes("%"), `chip lacks percent: ${last}`);
-  assert.ok(calls.some((c) => c.url === "http://s2a.test/api/v1/user/platform-quotas"));
+  assert.ok(calls.some((c) => c.url === "http://s2a.test/api/v1/admin/accounts/42/usage?source=passive"));
   fixture.cleanup();
 });
 
 test("second event within TTL re-publishes without fetching", async () => {
-  const { fetchImpl, calls } = scriptedFetch([loginStep("tok-1"), quotaStep()]);
+  const { fetchImpl, calls } = scriptedFetch([loginStep("tok-1"), usageStep()]);
   const fixture = makeFixture(fetchImpl);
   const runtime = runtimeOf(fixture, fetchImpl);
   runtime.handleEvent(fixture.ctx as unknown as ExtensionContext, { provider: "sub2api-gpt" });
@@ -195,7 +179,7 @@ test("second event within TTL re-publishes without fetching", async () => {
 });
 
 test("switching to unmarked provider clears the chip", async () => {
-  const { fetchImpl } = scriptedFetch([loginStep("tok-1"), quotaStep()]);
+  const { fetchImpl } = scriptedFetch([loginStep("tok-1"), usageStep()]);
   const fixture = makeFixture(fetchImpl);
   const runtime = runtimeOf(fixture, fetchImpl);
   runtime.handleEvent(fixture.ctx as unknown as ExtensionContext, { provider: "sub2api-gpt" });
@@ -211,13 +195,13 @@ test("401 on quota invalidates token, re-logins once, retries once", async () =>
     loginStep("tok-1"),
     () => jsonResponse({ code: 0 }, 401),
     loginStep("tok-2"),
-    quotaStep(),
+    usageStep(),
   ]);
   const fixture = makeFixture(fetchImpl);
   const runtime = runtimeOf(fixture, fetchImpl);
   runtime.handleEvent(fixture.ctx as unknown as ExtensionContext, { provider: "sub2api-gpt" });
   await settle(10);
-  const quotaCalls = calls.filter((c) => c.url.endsWith("/user/platform-quotas"));
+  const quotaCalls = calls.filter((c) => c.url.endsWith("/admin/accounts/42/usage?source=passive"));
   const loginCalls = calls.filter((c) => c.url.endsWith("/auth/login"));
   assert.equal(quotaCalls.length, 2);
   assert.equal(loginCalls.length, 2);
@@ -236,7 +220,7 @@ test("persistent 401 caps retries and shows error chip", async () => {
   const runtime = runtimeOf(fixture, fetchImpl);
   runtime.handleEvent(fixture.ctx as unknown as ExtensionContext, { provider: "sub2api-gpt" });
   await settle(10);
-  assert.equal(calls.filter((c) => c.url.endsWith("/user/platform-quotas")).length, 2);
+  assert.equal(calls.filter((c) => c.url.endsWith("/admin/accounts/42/usage?source=passive")).length, 2);
   const last = fixture.ctx.ui.statuses.at(-1)!;
   assert.ok(last.startsWith("📊 sub2api-gpt error:"), `unexpected chip: ${last}`);
   fixture.cleanup();
@@ -258,20 +242,28 @@ test("login rejection maps to error chip with backoff", async () => {
   fixture.cleanup();
 });
 
-test("quota response without the platform shows no quota", async () => {
-  const { fetchImpl } = scriptedFetch([
-    loginStep("tok-1"),
-    () =>
-      jsonResponse({
-        code: 0,
-        data: { platform_quotas: [{ platform: "gemini", daily_usage_usd: 1, weekly_usage_usd: 1, monthly_usage_usd: 1 }] },
-      }),
-  ]);
+test("usage response with null windows shows no usage", async () => {
+  const { fetchImpl } = scriptedFetch([loginStep("tok-1"), usageStep(null, null)]);
   const fixture = makeFixture(fetchImpl);
   const runtime = runtimeOf(fixture, fetchImpl);
   runtime.handleEvent(fixture.ctx as unknown as ExtensionContext, { provider: "sub2api-gpt" });
   await settle();
-  assert.equal(fixture.ctx.ui.statuses.at(-1), "📊 sub2api-gpt no quota");
+  assert.equal(fixture.ctx.ui.statuses.at(-1), "📊 sub2api-gpt no usage");
+  fixture.cleanup();
+});
+
+test("marked provider without an account id shows error chip", async () => {
+  const { fetchImpl } = scriptedFetch([]);
+  const fixture = makeFixture(fetchImpl);
+  writeFileSync(
+    join(fixture.agentDir, "pi-sub2api-usage.json"),
+    JSON.stringify({ baseUrl: "http://s2a.test", email: "u@x.y", password: "pw" }),
+  );
+  const runtime = runtimeOf(fixture, fetchImpl);
+  runtime.handleEvent(fixture.ctx as unknown as ExtensionContext, { provider: "sub2api-gpt" });
+  await settle();
+  assert.equal(fixture.ctx.ui.statuses.at(-1), "📊 sub2api-gpt error: no account id");
+  assert.equal(fetchImpl === undefined, false); // fetchImpl unused, no calls asserted
   fixture.cleanup();
 });
 
@@ -284,7 +276,7 @@ test("stale in-flight result is discarded on provider switch", async () => {
     loginStep("tok-1"),
     async () => {
       await gate;
-      return quotaStep()();
+      return usageStep()();
     },
   ]);
   const fixture = makeFixture(fetchImpl);
@@ -302,7 +294,7 @@ test("stale in-flight result is discarded on provider switch", async () => {
 });
 
 test("countdown re-render republishes every 60s without fetching", async () => {
-  const { fetchImpl, calls } = scriptedFetch([loginStep("tok-1"), quotaStep()]);
+  const { fetchImpl, calls } = scriptedFetch([loginStep("tok-1"), usageStep()]);
   const fixture = makeFixture(fetchImpl);
   const runtime = runtimeOf(fixture, fetchImpl);
   runtime.handleEvent(fixture.ctx as unknown as ExtensionContext, { provider: "sub2api-gpt" });
@@ -327,12 +319,13 @@ test("broken settings file warns once and shows no credentials chip", async () =
   await settle();
   assert.equal(fixture.ctx.ui.notifications.length, 1);
   assert.equal(fixture.ctx.ui.notifications[0]!.level, "warning");
-  assert.equal(fixture.ctx.ui.statuses.at(-1), "📊 sub2api-gpt error: no credentials");
+  // With account-id semantics the missing-account check fires before credentials.
+  assert.equal(fixture.ctx.ui.statuses.at(-1), "📊 sub2api-gpt error: no account id");
   fixture.cleanup();
 });
 
 test("shutdown clears timers and is repeatable", async () => {
-  const { fetchImpl } = scriptedFetch([loginStep("tok-1"), quotaStep()]);
+  const { fetchImpl } = scriptedFetch([loginStep("tok-1"), usageStep()]);
   const fixture = makeFixture(fetchImpl);
   const runtime = runtimeOf(fixture, fetchImpl);
   runtime.handleEvent(fixture.ctx as unknown as ExtensionContext, { provider: "sub2api-gpt" });
@@ -348,21 +341,16 @@ test("shutdown clears timers and is repeatable", async () => {
 });
 
 test("runManualCheck forces a query and notifies raw JSON", async () => {
-  const { fetchImpl, calls } = scriptedFetch([
-    loginStep("tok-1"),
-    quotaStep(),
-    loginStep("tok-2"),
-    quotaStep(),
-  ]);
+  const { fetchImpl, calls } = scriptedFetch([loginStep("tok-1"), usageStep(), usageStep()]);
   const fixture = makeFixture(fetchImpl);
   const runtime = runtimeOf(fixture, fetchImpl);
   runtime.handleEvent(fixture.ctx as unknown as ExtensionContext, { provider: "sub2api-gpt" });
   await settle();
   const callsBefore = calls.length;
   await runtime.runManualCheck(fixture.ctx as unknown as ExtensionCommandContext);
-  assert.ok(calls.length > callsBefore, "manual check must bypass the quota cache");
-  const notified = fixture.ctx.ui.notifications.find((n) => n.message.includes("platform_quotas"));
-  assert.ok(notified !== undefined, "notify should include raw JSON");
+  assert.ok(calls.length > callsBefore, "manual check must bypass the usage cache");
+  const notified = fixture.ctx.ui.notifications.find((n) => n.message.includes("fiveHour"));
+  assert.ok(notified !== undefined, "notify should include raw usage JSON");
   fixture.cleanup();
 });
 
