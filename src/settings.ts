@@ -33,7 +33,7 @@ export interface ModelsProviderEntry {
 }
 
 const DEFAULT_ROUTE = "/api/v1/admin/accounts/{id}/usage";
-const DEFAULT_REFRESH_MS = 300_000;
+const DEFAULT_REFRESH_MS = 180_000;
 
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;

@@ -27,8 +27,8 @@ Statusline preview (rendered by `@narumitw/pi-statusline`):
   `~/.pi/agent/pi-sub2api-usage-cache.json`, mode 0600; re-login happens automatically
   when they expire or a usage call returns 401).
 - Refreshes on session start, model switch, and turn start; while a marked provider
-  stays selected it also re-queries every `refreshMs` (5 min by default, like
-  pi-usage), with a 30s failure backoff and a 60s countdown re-render.
+  stays selected it also re-queries every `refreshMs` (3 min by default),
+  with a 30s failure backoff and a 60s countdown re-render.
 - By default queries `source=passive` (locally recorded data, no upstream round-trip);
   set `"usageSource": "active"` to query upstream on every refresh instead.
 - Publishes under its own status key `sub2api-usage`, so it never fights pi-usage.
@@ -83,7 +83,7 @@ All fields:
 | `method` | `GET` | `GET` or `POST` |
 | `usageSource` | `passive` | `passive` (cached) or `active` (upstream query) |
 | `accounts` | `{}` | `providerId → account id` mapping |
-| `refreshMs` | `300000` | usage cache TTL |
+| `refreshMs` | `180000` | usage cache TTL |
 
 ## Preconditions
 

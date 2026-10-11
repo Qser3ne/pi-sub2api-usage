@@ -33,7 +33,7 @@ test("normalizeSettings applies all defaults for empty object", () => {
   assert.equal(s.method, "GET");
   assert.deepEqual(s.accounts, {});
   assert.equal(s.usageSource, "passive");
-  assert.equal(s.refreshMs, 300000);
+  assert.equal(s.refreshMs, 180000);
   assert.equal(s.baseUrl, undefined);
   assert.equal(s.email, undefined);
   assert.equal(s.password, undefined);
@@ -66,7 +66,7 @@ test("normalizeSettings round-trips provided values", () => {
 test("normalizeSettings falls back per-field on invalid values", () => {
   const s = normalizeSettings({ method: "PUT", refreshMs: "fast", route: 42, usageSource: "weird" });
   assert.equal(s.method, "GET");
-  assert.equal(s.refreshMs, 300000);
+  assert.equal(s.refreshMs, 180000);
   assert.equal(s.route, "/api/v1/admin/accounts/{id}/usage");
   assert.equal(s.usageSource, "passive");
 });
@@ -81,14 +81,14 @@ test("normalizeSettings handles non-object raw input", () => {
     const s = normalizeSettings(raw);
     assert.equal(s.route, "/api/v1/admin/accounts/{id}/usage");
     assert.equal(s.method, "GET");
-    assert.equal(s.refreshMs, 300000);
+    assert.equal(s.refreshMs, 180000);
     assert.equal(s.usageSource, "passive");
   }
 });
 
 test("normalizeSettings clamps negative and non-positive refreshMs", () => {
-  assert.equal(normalizeSettings({ refreshMs: -5 }).refreshMs, 300000);
-  assert.equal(normalizeSettings({ refreshMs: 0 }).refreshMs, 300000);
+  assert.equal(normalizeSettings({ refreshMs: -5 }).refreshMs, 180000);
+  assert.equal(normalizeSettings({ refreshMs: 0 }).refreshMs, 180000);
 });
 
 test("loadSettings parses a valid file", () => {
