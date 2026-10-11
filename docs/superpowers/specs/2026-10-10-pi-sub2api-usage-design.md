@@ -227,3 +227,8 @@ pi-sub2api-usage/            # 仓库根（本 repo）
 - 配置变化：settings 弃用 `platformMap`，新增 `accounts`（providerId → 账号 ID）与 `usageSource`（默认 passive，不打上游）；`route` 变为含 `{id}` 占位符的模板（保留"路由+请求方式可配置"）
 - 显示格式改为复刻 pi-usage codex 风格：`📊 sub2api-claude 20% ↻ 4h12m 16% ↻ 3d13h`（5h 窗口 + 7d 窗口，各带 ↻ 倒计时；窗口为 null 时跳过该段，两者皆 null 显示 `no usage`）
 - 实测：账号 3589（claude 自用，OAuth）返回真实数据；apikey 中继型账号（3569/3587/10/9）该接口 500，无窗口语义
+
+### 修订 A.1（2026-10-11）：百分比改为剩余量
+
+用户澄清需显示**剩余**而非已用（与 pi-usage codex 的 `codexStatusPercentage="remaining"` 默认一致）。
+chip 百分比 = max(0, round(100 − utilization))，超限（utilization>100）钳为 0%；倒计时语义不变。

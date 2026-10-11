@@ -15,29 +15,32 @@ const usage = (fiveHour: UsageWindow | null, sevenDay: UsageWindow | null): Acco
   sevenDay,
 });
 
-test("full codex-style chip with both windows and countdowns", () => {
+test("full codex-style chip shows REMAINING percent with countdowns", () => {
   const u = usage(
     window(0, NOW + ((2 * 60 + 12) * 60 + 5) * 1000),
     window(26, NOW + ((3 * 24 + 13) * 60 * 60) * 1000),
   );
-  assert.equal(formatQuotaChip("codex", u, NOW), "📊 codex 0% ↻ 2h12m 26% ↻ 3d13h");
+  assert.equal(formatQuotaChip("codex", u, NOW), "📊 codex 100% ↻ 2h12m 74% ↻ 3d13h");
 });
 
-test("utilization rounds to integer percent", () => {
+test("remaining percent rounds and clamps at zero", () => {
   const u = usage(window(16.4, NOW + 90_000), window(20.5));
   const chip = formatQuotaChip("p", u, NOW);
-  assert.ok(chip.includes("16%"), chip);
-  assert.ok(chip.includes("21%"), chip);
+  assert.ok(chip.includes("84%"), chip);
+  assert.ok(chip.includes("80%"), chip);
+  const over = usage(window(120, NOW + 90_000), window(0));
+  const overChip = formatQuotaChip("p", over, NOW);
+  assert.ok(overChip.includes("0%"), overChip);
 });
 
 test("null resets_at drops the countdown for that window", () => {
   const u = usage(window(20, null), window(16, null));
-  assert.equal(formatQuotaChip("p", u, NOW), "📊 p 20% 16%");
+  assert.equal(formatQuotaChip("p", u, NOW), "📊 p 80% 84%");
 });
 
 test("null window is skipped entirely", () => {
   const u = usage(null, window(16, NOW + 3_600_000));
-  assert.equal(formatQuotaChip("p", u, NOW), "📊 p 16% ↻ 1h0m");
+  assert.equal(formatQuotaChip("p", u, NOW), "📊 p 84% ↻ 1h0m");
 });
 
 test("both windows null renders no usage", () => {
@@ -47,7 +50,7 @@ test("both windows null renders no usage", () => {
 
 test("past resets_at shows 0s countdown", () => {
   const u = usage(window(100, NOW - 1_000), window(50, NOW + 60_000));
-  assert.equal(formatQuotaChip("p", u, NOW), "📊 p 100% ↻ 0s 50% ↻ 1m");
+  assert.equal(formatQuotaChip("p", u, NOW), "📊 p 0% ↻ 0s 50% ↻ 1m");
 });
 
 test("formatCountdown renders compact units", () => {

@@ -24,7 +24,8 @@ export function truncateChip(text: string, max = MAX_CHIP_LENGTH): string {
 
 const windowSegment = (window: UsageWindow, now: number): string | undefined => {
   if (window.utilization === null) return undefined;
-  const percent = `${Math.round(window.utilization)}%`;
+  // Display REMAINING quota (like pi-usage's codex "remaining" default), clamped at 0.
+  const percent = `${Math.max(0, Math.round(100 - window.utilization))}%`;
   if (window.resetsAt !== null) return `${percent} ↻ ${formatCountdown(window.resetsAt, now)}`;
   return percent;
 };
